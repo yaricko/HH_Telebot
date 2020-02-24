@@ -2,10 +2,22 @@ import telebot
 import requests
 import time
 import config
+import databases
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 bot = telebot.TeleBot(config.TOKEN)
+
 hh_api_url = 'https://api.hh.ru/vacancies'
 pages = []
+
+engine = create_engine(config.DB_URI)
+databases.Base.metadata.create_all(bind=engine)
+
+Session = sessionmaker()
+Session.configure(bind=engine)
+session = Session()
 
 query = {
     'text': None,
@@ -13,100 +25,61 @@ query = {
     'employment': None
 }
 
-# @bot.message_handler(commands=['start'])
-# def start_message(message):
-#     bot.send_message(message.chat.id, 'Привет, я hh bot! Могу помочь с поиском вакансии :)\n' +
-#                      'Напиши ключевое слово: ')
-#     bot.register_next_step_handler(message, get_key_word)
-#
-#
-# def get_key_word(message):
-#     query['text'] = message.text
-#     bot.send_message(message.from_user.id, 'Напиши желаемый оклад: ')
-#     bot.register_next_step_handler(message, get_salary)
-#
-#
-# def get_salary(message):
-#     query['salary'] = message.text
-#     bot.send_message(message.from_user.id, 'Напиши тип занятости: ')
-#     bot.register_next_step_handler(message, get_employment)
-#
-#
-# def get_employment(message):
-#     if message.text.find('Полная') != -1:
-#         query['employment'] = 'full'
-#     elif message.text.find('Частичная') != -1:
-#         query['employment'] = 'part'
-#     elif message.text.find('Проектная') != -1:
-#         query['employment'] = 'project'
-#     elif message.text.find('Волонтер') != -1:
-#         query['employment'] = 'volunteer'
-#     elif message.text.find('Стажировка') != -1:
-#         query['employment'] = 'probation'
-#
-#     bot.send_message(message.from_user.id, 'Всё понял! Начинаю поиск')
-#     search_vacancies(message)
-#
-#
-# def search_vacancies(message):
-#     while True:
-#         for i in range(10):
-#             r = requests.get(hh_api_url, params=query)
-#             e = r.json()
-#             pages.append(e)
-#
-#         for page in pages:
-#             vacs = page['items']
-#
-#             for v in vacs:
-#                 bot.send_message(message.from_user.id, v['alternate_url'])
-#                 time.sleep(10)
-
-
 @bot.message_handler(commands=['start'])
 def start_message(message):
+    row = session.query(databases.Chat_Table).filter(databases.Chat_Table.chat_id == message.chat.id).first()
+    if not row:
+        new_row = databases.Chat_Table(chat_id=message.chat.id)
+        session.add(new_row)
+        session.commit()
     bot.send_message(message.chat.id, 'Привет, я hh bot! Могу помочь с поиском вакансии :)\n' +
                      'Напиши ключевое слово: ')
 
+
 @bot.message_handler(content_types=['text'])
 def text_message(message):
-    if query['text'] is None and query['salary'] is None and query['employment'] is None:
-        query['text'] = message.text
+    row = session.query(databases.Chat_Table).filter(databases.Chat_Table.chat_id == message.chat.id).first()
+    if row.text is None and row.salary is None and row.employment is None:
+        row.text = message.text
+        session.commit()
         bot.send_message(message.chat.id, 'Напиши желаемый оклад')
-    elif query['salary'] is None and query['employment'] is None:
+    elif row.salary is None and row.employment is None:
         if message.text.isdigit():
-            query['salary'] = message.text
+            row.salary = message.text
+            session.commit()
             bot.send_message(message.chat.id, 'Напиши тип занятости')
         else:
             bot.send_message(message.chat.id, 'Неверно введенные данные')
     elif query['employment'] is None:
         if message.text.find('Полная') != -1:
-            query['employment'] = 'full'
+            row.employment = 'full'
         elif message.text.find('Частичная') != -1:
-            query['employment'] = 'part'
+            row.employment = 'part'
         elif message.text.find('Проектная') != -1:
-            query['employment'] = 'project'
+            row.employment = 'project'
         elif message.text.find('Волонтер') != -1:
-            query['employment'] = 'volunteer'
+            row.employment = 'volunteer'
         elif message.text.find('Стажировка') != -1:
-            query['employment'] = 'probation'
-        if query['employment'] is None:
+            row.employment = 'probation'
+        if row.employment is None:
             bot.send_message(message.chat.id,
                              'Введите пожалуйста значения типа: (Полная,Частичная,Проектная,Волонтерство,Стажировка)')
         else:
+            session.commit()
             bot.send_message(message.chat.id, 'Всё понял! Начинаю поиск!')
-            while True:
-                for i in range(10):
-                    r = requests.get(hh_api_url, params=query)
-                    e = r.json()
-                    pages.append(e)
+            # while True:
+            #     for i in range(10):
+            #         r = requests.get(hh_api_url, params={'text': row.text,
+            #                                              'salary': str(round(row.salary)),
+            #                                              'employment': row.employment})
+            #         e = r.json()
+            #         pages.append(e)
+            #
+            #     for page in pages:
+            #         vacs = page['items']
+            #
+            #         for v in vacs:
+            #             bot.send_message(message.chat.id, v['alternate_url'])
+            #             time.sleep(10)
 
-                for page in pages:
-                    vacs = page['items']
-
-                    for v in vacs:
-                        bot.send_message(message.from_user.id, v['alternate_url'])
-                        time.sleep(10)
-
-
-bot.polling(none_stop=True)
+bot.polling(none_stop=True, interval=0, timeout=20)
