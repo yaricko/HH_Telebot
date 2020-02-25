@@ -4,6 +4,7 @@ import time
 import config
 import databases
 from multiprocessing import Process
+from threading import Thread
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -84,14 +85,22 @@ def text_message(message):
 
 
 def create_process(id):
-    processes[id] = Process(target=update_vacancies, args=(id, ))
-    processes[id].daemon = True
+    processes[id] = Process(target=update_vacancies, args=(id, ), daemon=True)
     processes[id].start()
 
 
 def delete_process(id):
     processes[id].terminate()
     processes.pop(id, None)
+
+
+def watchdog():
+    while True:
+        for id in session.query(databases.Chat_Table.id):
+            if id[0] in processes.keys() and not processes[id[0]].is_alive():
+                # Does DB row delete?
+                delete_process(id[0])
+        time.sleep(10)
 
 
 def update_vacancies(id):
@@ -117,6 +126,9 @@ def update_vacancies(id):
 
 
 if __name__ == '__main__':
+    wdog = Thread(target=watchdog, daemon=True)
+    wdog.start()
+
     for chat in session.query(databases.Chat_Table):
         if chat.text and chat.salary and chat.employment:
             create_process(chat.id)
