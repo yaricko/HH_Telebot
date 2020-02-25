@@ -3,6 +3,7 @@ import requests
 import time
 import config
 import databases
+from multiprocessing import Process
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -10,7 +11,6 @@ from sqlalchemy.orm import sessionmaker
 bot = telebot.TeleBot(config.TOKEN)
 
 hh_api_url = 'https://api.hh.ru/vacancies'
-pages = []
 
 engine = create_engine(config.DB_URI)
 databases.Base.metadata.create_all(bind=engine)
@@ -25,13 +25,22 @@ query = {
     'employment': None
 }
 
+processes = {}
+
+
 @bot.message_handler(commands=['start'])
 def start_message(message):
     row = session.query(databases.Chat_Table).filter(databases.Chat_Table.chat_id == message.chat.id).first()
-    if not row:
-        new_row = databases.Chat_Table(chat_id=message.chat.id)
-        session.add(new_row)
+    if row:
+        if row.id in processes.keys():
+            delete_process(row.id)
+
+        session.delete(row)
         session.commit()
+
+    new_row = databases.Chat_Table(chat_id=message.chat.id)
+    session.add(new_row)
+    session.commit()
     bot.send_message(message.chat.id, 'Привет, я hh bot! Могу помочь с поиском вакансии :)\n' +
                      'Напиши ключевое слово: ')
 
@@ -39,6 +48,10 @@ def start_message(message):
 @bot.message_handler(content_types=['text'])
 def text_message(message):
     row = session.query(databases.Chat_Table).filter(databases.Chat_Table.chat_id == message.chat.id).first()
+    if not row:
+        bot.send_message(message.chat.id,
+                         'Для создания нового поиска вакансий введите команду /start')
+        return
     if row.text is None and row.salary is None and row.employment is None:
         row.text = message.text
         session.commit()
@@ -50,7 +63,7 @@ def text_message(message):
             bot.send_message(message.chat.id, 'Напиши тип занятости')
         else:
             bot.send_message(message.chat.id, 'Неверно введенные данные')
-    elif query['employment'] is None:
+    elif row.employment is None:
         if message.text.find('Полная') != -1:
             row.employment = 'full'
         elif message.text.find('Частичная') != -1:
@@ -67,19 +80,51 @@ def text_message(message):
         else:
             session.commit()
             bot.send_message(message.chat.id, 'Всё понял! Начинаю поиск!')
-            # while True:
-            #     for i in range(10):
-            #         r = requests.get(hh_api_url, params={'text': row.text,
-            #                                              'salary': str(round(row.salary)),
-            #                                              'employment': row.employment})
-            #         e = r.json()
-            #         pages.append(e)
-            #
-            #     for page in pages:
-            #         vacs = page['items']
-            #
-            #         for v in vacs:
-            #             bot.send_message(message.chat.id, v['alternate_url'])
-            #             time.sleep(10)
+            create_process(row.id)
 
-bot.polling(none_stop=True, interval=0, timeout=20)
+
+def create_process(id):
+    processes[id] = Process(target=update_vacancies, args=(id, ))
+    processes[id].daemon = True
+    processes[id].start()
+
+
+def delete_process(id):
+    processes[id].terminate()
+    processes.pop(id, None)
+
+
+def update_vacancies(id):
+    while True:
+        chat = session.query(databases.Chat_Table).filter(databases.Chat_Table.id == id).first()
+        if not chat or not chat.text or not chat.salary or not chat.employment:
+            continue
+
+        pages = []
+        for i in range(3):
+            r = requests.get(hh_api_url, params={'text': chat.text,
+                                                 'salary': str(round(chat.salary)),
+                                                 'employment': chat.employment})
+            e = r.json()
+            pages.append(e)
+
+        for page in pages:
+            vacs = page['items']
+
+            for v in vacs:
+                bot.send_message(chat.chat_id, v['alternate_url'])
+                time.sleep(10)
+
+
+if __name__ == '__main__':
+    for chat in session.query(databases.Chat_Table):
+        if chat.text and chat.salary and chat.employment:
+            create_process(chat.id)
+
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=0, timeout=20)
+        except Exception as e:
+            print(e)
+            time.sleep(15)
+
