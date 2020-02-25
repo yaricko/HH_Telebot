@@ -31,19 +31,17 @@ processes = {}
 
 @bot.message_handler(commands=['start'])
 def start_message(message):
-    row = session.query(databases.Chat_Table).filter(databases.Chat_Table.chat_id == message.chat.id).first()
-    if row:
-        if row.id in processes.keys():
-            delete_process(row.id)
-
-        session.delete(row)
-        session.commit()
-
+    delete_saved_chat(message.chat.id)
     new_row = databases.Chat_Table(chat_id=message.chat.id)
     session.add(new_row)
     session.commit()
     bot.send_message(message.chat.id, 'Привет, я hh bot! Могу помочь с поиском вакансии :)\n' +
                      'Напиши ключевое слово: ')
+
+
+@bot.message_handler(commands=['stop'])
+def start_message(message):
+    delete_saved_chat(message.chat.id)
 
 
 @bot.message_handler(content_types=['text'])
@@ -82,6 +80,15 @@ def text_message(message):
             session.commit()
             bot.send_message(message.chat.id, 'Всё понял! Начинаю поиск!')
             create_process(row.id)
+
+
+def delete_saved_chat(chat_id):
+    row = session.query(databases.Chat_Table).filter(databases.Chat_Table.chat_id == chat_id).first()
+    if row:
+        if row.id in processes.keys():
+            delete_process(row.id)
+        session.delete(row)
+        session.commit()
 
 
 def create_process(id):
