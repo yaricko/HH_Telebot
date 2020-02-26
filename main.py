@@ -128,7 +128,24 @@ def update_vacancies(id):
             vacs = page['items']
 
             for v in vacs:
-                bot.send_message(chat.chat_id, v['alternate_url'])
+                try:
+                    bot.send_message(chat.chat_id, v['alternate_url'])
+                except telebot.apihelper.ApiException as e:
+                    if e.result.status_code == 403:
+                        print("Chat %d deleted" % chat.chat_id)
+                        return
+                    elif e.result.status_code == 409:
+                        print('Webhook exception. Reset')
+                        bot.delete_webhook()
+                        time.sleep(15)
+                        print('Done')
+                        bot.send_message(chat.chat_id, v['alternate_url'])
+                    else:
+                        print(e)
+                        return
+                except Exception as e:
+                    print(e)
+                    return
                 time.sleep(10)
 
 
@@ -143,6 +160,15 @@ if __name__ == '__main__':
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=20)
+        except telebot.apihelper.ApiException as e:
+            if e.result.status_code == 409:
+                print('Webhook exception. Reset')
+                bot.delete_webhook()
+                time.sleep(15)
+                print('Done')
+            else:
+                print(e)
+                time.sleep(15)
         except Exception as e:
             print(e)
             time.sleep(15)
